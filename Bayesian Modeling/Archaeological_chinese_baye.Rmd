@@ -1,0 +1,519 @@
+---
+title: "ancient_chinese_bay_updated"
+author: "DC"
+date: "2024-09-10"
+output:
+  word_document: default
+  html_document: default
+---
+
+# 3.  Bayesian Modelling
+*For FXL*
+## 3.1  Prepare the data
+```{r}
+# Load dataset
+data <- ancient_chi_detail
+
+data <- data %>%
+  filter(!is.na(FXL) & 
+         !is.na(longitude) & 
+         !is.na(latitude) & 
+         !is.na(Time_plus) & 
+         !is.na(Time_minus) & 
+         !is.na(site_id))
+
+
+# Adjust true_sex to be 0 for male and 1 for female
+data$true_sex <- data$sex
+
+# Generate true_date ensuring no NA values in Time_minus and Time_plus
+# The true date is modeled as uniformly distributed between Time− and Time+. 
+# This accounts for uncertainty in dating.
+data <- data %>%
+  mutate(true_date = ifelse(!is.na(Time_minus) & !is.na(Time_plus), 
+                            mapply(function(min, max) runif(1, min, max), Time_minus, Time_plus), 
+                            NA))
+```
+
+## 3.2  Fit the model
+```{r}
+# Load dataset
+data_male <- ancient_chi_male
+
+data_male <- data_male %>%
+  filter(!is.na(FXL) & 
+         !is.na(longitude) & 
+         !is.na(latitude) & 
+         !is.na(Time_plus) & 
+         !is.na(Time_minus) & 
+         !is.na(site_id))
+
+data_male <- data_male %>%
+  mutate(true_date = ifelse(!is.na(Time_minus) & !is.na(Time_plus), 
+                            mapply(function(min, max) runif(1, min, max), Time_minus, Time_plus), 
+                            NA))
+
+# Load dataset
+data_female <- ancient_chi_female
+
+data_female <- data_female %>%
+  filter(!is.na(FXL) & 
+         !is.na(longitude) & 
+         !is.na(latitude) & 
+         !is.na(Time_plus) & 
+         !is.na(Time_minus) & 
+         !is.na(site_id))
+
+data_female <- data_female %>%
+  mutate(true_date = ifelse(!is.na(Time_minus) & !is.na(Time_plus), 
+                            mapply(function(min, max) runif(1, min, max), Time_minus, Time_plus), 
+                            NA))
+```
+
+### Model Fitting for Males
+```{r}
+formula <- bf(
+ FXL ~ t2(longitude, latitude, true_date) +
+      (1 | site_id))
+
+# Set priors for the model using inverse gamma for variance components and gamma for smoothing
+priors <- c( 
+  # Gamma prior for smoothing parameters (λ1, λ2, λ3)
+  prior(gamma(1, 0.0001), class = "sds"),  # For B-splines smooth terms
+  
+  # Inverse gamma prior for site-specific random effects variance (τ)
+  prior(inv_gamma(0.0001, 0.0001), class = "sd", group = "site_id"),
+  
+  # Inverse gamma prior for residual variance (σ)
+  prior(inv_gamma(0.0001, 0.0001), class = "sigma")
+)
+
+# Define initial values for 4 chains
+# Define initial values for the parameters in chains 1 to 4
+init_values <- list(
+  list(scale = 0.1, prop = 0.2, other = -1), # Chain 1
+  list(scale = 1, prop = 0.4, other = 0),    # Chain 2
+  list(scale = 10, prop = 0.6, other = 1),   # Chain 3
+  list(scale = 100, prop = 0.8, other = 10)  # Chain 4
+)
+
+# Assuming you're using brms or rstan to fit the model
+fit_male_fxl <- brm(
+  formula = formula,
+  data = data_male,
+  family = gaussian(),
+  prior = priors,
+  chains = 4,           # Number of chains
+  iter = 20000,         # Total iterations per chain
+  warmup = 7500,        # Warmup iterations per chain
+  thin = 10,            # Thinning interval
+  init = init_values,  # Provide the defined initial values for each chain
+  control = list(adapt_delta = 0.99, max_treedepth = 15)
+)
+
+# Save the fitted model object
+saveRDS(fit_male_fxl, file = "fitted_model_male_fxl.rds")
+
+# Check model diagnostics and summary
+model_summary <- summary(fit_male_fxl)
+plot(fit_male_fxl)
+
+# Save the model summary to a text file
+capture.output(model_summary, file = "model_summary_male_fxl.txt")
+
+# Check Gelman-Rubin diagnostic (Rhat values)
+rhats <- model_summary$fixed$Rhat
+write.csv(rhats, file = "rhat_values_male_fxl.csv")
+
+# Save the diagnostic plots
+pdf("reduced_model_diagnostics_male_fxl.pdf")
+dev.off()
+```
+
+### Model Fitting for females
+```{r}
+# Define the model formula
+formula_female <- bf(
+  FXL ~ t2(longitude, latitude, true_date) +
+       (1 | site_id))
+
+# Set priors for the model using inverse gamma for variance components and gamma for smoothing
+priors_female <- c( 
+  # Gamma prior for smoothing parameters (λ1, λ2, λ3)
+  prior(gamma(1, 0.0001), class = "sds"),  # For B-splines smooth terms
+  
+  # Inverse gamma prior for site-specific random effects variance (τ)
+  prior(inv_gamma(0.0001, 0.0001), class = "sd", group = "site_id"),
+  
+  # Inverse gamma prior for residual variance (σ)
+  prior(inv_gamma(0.0001, 0.0001), class = "sigma")
+)
+
+# Define initial values for 4 chains
+init_values_female <- list(
+  list(scale = 0.1, prop = 0.2, other = -1), # Chain 1
+  list(scale = 1, prop = 0.4, other = 0),    # Chain 2
+  list(scale = 10, prop = 0.6, other = 1),   # Chain 3
+  list(scale = 100, prop = 0.8, other = 10)  # Chain 4
+)
+
+# Fit the model for female data
+fit_female_fxl <- brm(
+  formula = formula_female,
+  data = data_female,
+  family = gaussian(),
+  prior = priors_female,
+  chains = 4,           # Number of chains
+  iter = 20000,          # Total iterations per chain
+  warmup = 7500,         # Warmup iterations per chain
+  thin = 10,            # Thinning interval
+  init = init_values_female,  # Provide the defined initial values for each chain
+  control = list(adapt_delta = 0.99, max_treedepth = 15)
+)
+
+# Save the fitted model object
+saveRDS(fit_female_fxl, file = "fitted_model_female_fxl.rds")
+
+# Check model diagnostics and summary
+model_summary_female <- summary(fit_female_fxl)
+plot(fit_female_fxl)
+
+# Save the model summary to a text file
+capture.output(model_summary_female, file = "model_summary_female_fxl.txt")
+
+# Check Gelman-Rubin diagnostic (Rhat values)
+rhats_female <- model_summary_female$fixed$Rhat
+write.csv(rhats_female, file = "rhat_values_female_fxl.csv")
+
+# Save the diagnostic plots
+pdf("reduced_model_diagnostics_female_fxl.pdf")
+dev.off()
+```
+
+## 3.3 Slice data_for both sexes
+### for male and female
+```{r}
+# Define updated time slices with descriptive labels
+time_slices <- c("Early_Neo", "Mid_Neo", "Late_Neo", "Shang_Zhou", "Han_Jin", "Tang_Yuan", "Ming_Qing")
+
+# List of representative numeric true_date values for time slices
+time_slice_values <- list(
+  "Early_Neo" = 8500, 
+  "Mid_Neo" = 6000,  
+  "Late_Neo" = 4000,  
+  "Shang_Zhou" = 2860, 
+  "Han_Jin" = 1500,    
+  "Tang_Yuan" = 1000,   
+  "Ming_Qing" = 300    
+)
+
+# Function to create a time slice variable based on true_date
+create_time_slice <- function(data) {
+  data %>%
+    mutate(time_slice = case_when(
+      true_date >= 7001 & true_date <= 10000 ~ "Early_Neo",
+      true_date >= 4501 & true_date <= 7000 ~ "Mid_Neo",
+      true_date >= 3568 & true_date <= 4500 ~ "Late_Neo",
+      true_date >= 2153 & true_date <= 3567 ~ "Shang_Zhou",
+      true_date >= 1333 & true_date <= 2152 ~ "Han_Jin",
+      true_date >= 583 & true_date <= 1332 ~ "Tang_Yuan",
+      true_date <= 582 ~ "Ming_Qing"
+    )) %>%
+    drop_na(time_slice) %>%  # Remove rows where time_slice is NA
+    mutate(time_slice = factor(time_slice, levels = time_slices))  # Convert time_slice to factor
+}
+```
+
+
+```{r}
+# Function to generate predictions for a given true_date
+generate_predictions <- function(true_date, grid, fit_model) {
+  prediction_grid <- grid %>%
+    mutate(true_date = true_date)
+  
+  # Get posterior predictions (assuming fit_model is provided)
+  preds <- posterior_epred(fit_model, newdata = prediction_grid, re_formula = NA)
+  
+  # Summarize predictions (e.g., using the mean)
+  prediction_grid$FXL <- rowMeans(preds)
+  
+  return(prediction_grid)
+}
+
+# Function to generate predictions and save to CSV for specified datasets
+generate_and_save_predictions <- function(data, fit_model, sex_label) {
+  # Create the time_slice variable
+  data <- create_time_slice(data)
+  
+  # Generate a grid of longitude and latitude values
+  lon_range <- seq(65, 140, length.out = 100)
+  lat_range <- seq(15, 65, length.out = 100)
+  grid <- expand.grid(longitude = lon_range, latitude = lat_range)
+  
+  # Loop to generate predictions and save them into CSV files
+  for (time_slice_name in names(time_slice_values)) {
+    true_date <- time_slice_values[[time_slice_name]]
+    
+    # Generate predictions for the current true_date
+    predictions <- generate_predictions(true_date, grid, fit_model)
+    
+    # Define the file name based on the time slice label and sex label
+    file_name <- paste0("predictions_", sex_label, "_", time_slice_name, ".csv")
+    
+    # Write the predictions to a CSV file
+    write.csv(predictions, file = file_name, row.names = FALSE)
+  }
+}
+
+# Run for male and female datasets
+generate_and_save_predictions(data_male, fit_male_fxl, "male")
+generate_and_save_predictions(data_female, fit_female_fxl, "female")
+```
+
+### Read CSV Files for Females and Males
+```{r}
+# List to store the datasets for male and female
+datasets_male_list <- list()
+datasets_female_list <- list()
+
+# Function to read and store datasets for both males and females
+read_saved_csv <- function(sex_label, datasets_list) {
+  # Loop through time slices
+  for (time_slice_name in time_slices) {
+    # Construct the file name based on time slice and sex
+    file_name <- paste0("predictions_", sex_label, "_", time_slice_name, ".csv")
+    
+    # Check if the file exists before attempting to read it
+    if (file.exists(file_name)) {
+      # Read the CSV file
+      dataset <- read.csv(file_name)
+      
+      # Create the variable name using time slice and sex
+      dataset_name <- paste0("data_", sex_label, "_", time_slice_name)
+      
+      # Store the dataset in the appropriate list
+      datasets_list[[dataset_name]] <- dataset
+      
+      # Optionally print to confirm the dataset has been read
+      cat("Read and stored dataset for:", dataset_name, "\n")
+    } else {
+      cat("File does not exist:", file_name, "\n")
+    }
+  }
+  return(datasets_list)
+}
+
+# Read datasets for males and females
+datasets_male_list <- read_saved_csv("male", datasets_male_list)
+datasets_female_list <- read_saved_csv("female", datasets_female_list)
+```
+
+### Reduce the Size of Each Dataset
+```{r}
+# Create empty lists to store the reduced datasets
+datasets_male_sampled <- list()
+datasets_female_sampled <- list()
+
+# Reduce the male datasets
+for (time_slice_name in time_slices) {
+  # Construct the dataset name
+  dataset_name <- paste0("data_male_", time_slice_name)
+  
+  # Check if the dataset exists in the male list
+  if (dataset_name %in% names(datasets_male_list)) {
+    # Retrieve the dataset from the list
+    dataset <- datasets_male_list[[dataset_name]]
+    
+    # Sample 50% of the dataset
+    sampled_dataset <- dataset %>%
+      sample_frac(0.5)
+    
+    # Store the sampled dataset in the male sampled list
+    datasets_male_sampled[[paste0(dataset_name, "_sampled")]] <- sampled_dataset
+    
+    # Optionally print to confirm the dataset has been sampled
+    cat("Sampled and stored 30% of data for:", dataset_name, "\n")
+  } else {
+    cat("Dataset does not exist for:", dataset_name, "\n")
+  }
+}
+
+# Reduce the female datasets
+for (time_slice_name in time_slices) {
+  # Construct the dataset name
+  dataset_name <- paste0("data_female_", time_slice_name)
+  
+  # Check if the dataset exists in the global environment (for female datasets)
+  if (exists(dataset_name)) {
+    # Retrieve the dataset
+    dataset <- get(dataset_name)
+    
+    # Sample 50% of the dataset
+    sampled_dataset <- dataset %>%
+      sample_frac(0.5)
+    
+    # Store the sampled dataset in the female sampled list
+    datasets_female_sampled[[paste0(dataset_name, "_sampled")]] <- sampled_dataset
+    
+    # Optionally print to confirm the dataset has been sampled
+    cat("Sampled and stored 50% of data for:", dataset_name, "\n")
+  } else {
+    cat("Dataset does not exist for:", dataset_name, "\n")
+  }
+}
+```
+
+# 4. Map the Trend
+## 4.1 Get the base map
+```{r}
+# Define the spatial extent (bounding box) using coordinates (longitude, latitude)
+locations <- data.frame(x = c(62, 136.0),  # Longitudes
+                        y = c(10.0, 58))  # Latitudes
+
+# Get the elevation data (z = 3 for zoom level)
+elevation_raster <- get_elev_raster(locations, z = 5, prj = "+proj=longlat +datum=WGS84")
+elevation_raster
+
+# Set the path to the shapefile
+shapefile_path <- "data/bou1_4p.shp"
+# Read the shapefile
+basemap <- st_read(shapefile_path)
+```
+
+### Convert location to an sf object 
+```{r}
+Ancient_groups_mean_FXL <- read_csv("data/Ancient_Chinese.csv")
+# Remove rows with missing Longitude or Latitude values
+Ancient_groups_mean <- Ancient_groups_mean[!is.na(Ancient_groups_mean$Longitude) & !is.na(Ancient_groups_mean$Latitude), ]
+Ancient_groups_mean$Period <- as.factor(Ancient_groups_mean$Period)
+ancient_chi_sf <- st_as_sf(Ancient_groups_mean, coords = c("Longitude", "Latitude"), crs = 4326)
+
+## Male
+Ancient_male_FXL_location <- read_csv("data/Ancient_Chinese_FXL_male_for_individual_location.csv")
+# Remove rows with missing Longitude or Latitude values
+Ancient_male_FXL_location<- Ancient_male_FXL_location[!is.na(Ancient_male_FXL_location$Longitude) & !is.na(Ancient_male_FXL_location$Latitude), ]
+Ancient_male_FXL_location$Period <- as.factor(Ancient_male_FXL_location$Period)
+ancient_chi_male_fxl_sf <- st_as_sf(Ancient_male_FXL_location, coords = c("Longitude", "Latitude"), crs = 4326)
+
+## Female
+Ancient_female_FXL_location <- read_csv("data/Ancient_Chinese_FXL_female_for_individual_location.csv")
+# Remove rows with missing Longitude or Latitude values
+Ancient_female_FXL_location<- Ancient_female_FXL_location[!is.na(Ancient_female_FXL_location$Longitude) & !is.na(Ancient_female_FXL_location$Latitude), ]
+Ancient_female_FXL_location$Period <- as.factor(Ancient_female_FXL_location$Period)
+ancient_chi_female_fxl_sf <- st_as_sf(Ancient_female_FXL_location, coords = c("Longitude", "Latitude"), crs = 4326)
+```
+
+### Site locations for all periods
+```{r}
+# Convert the raster to a data frame for ggplot2
+elevation_df <- as.data.frame(elevation_raster, xy = TRUE)
+
+# Plot with refined color scheme
+ggplot() +
+  geom_sf(data = basemap, fill = "lightgray", color = "black") +  # Basemap with outline
+  geom_sf(data = ancient_chi_sf, aes(color = Period), size = 2, alpha = 0.7) +  # Site locations colored by Period
+  theme_minimal() +
+  labs(title = "Site Locations by Period on Basemap", x = "Longitude", y = "Latitude", color = "Period") +
+  scale_color_viridis_d()  
+```
+
+```{r}
+# Convert data to a spatial object with longitude and latitude coordinates
+coordinates(data_Han_Yuan_male_sampled) <- ~longitude + latitude
+```
+
+## 4.2 Plot the trend of FXL
+```{r}
+# Define color scales and limits
+male_colors <- rev(terrain.colors(650))
+female_colors <- rev(terrain.colors(650))
+male_FXL_limits <- c(405, 455)
+female_FXL_limits <- c(405, 455)
+
+# Transform basemap CRS
+basemap <- st_transform(basemap, crs = st_crs(4326))
+basemap_sp <- as_Spatial(basemap)
+
+# Define period-specific sites for male
+period_sites_male <- list(
+  period_1_sites = subset(ancient_chi_male_fxl_sf, Period == 1),
+  period_2_sites = subset(ancient_chi_male_fxl_sf, Period == 2),
+  period_3_sites = subset(ancient_chi_male_fxl_sf, Period == 3),
+  period_4_sites = subset(ancient_chi_male_fxl_sf, Period == 4),
+  period_5_sites = subset(ancient_chi_male_fxl_sf, Period == 5),
+  period_6_sites = subset(ancient_chi_male_fxl_sf, Period == 6),
+  period_7_sites = subset(ancient_chi_male_fxl_sf, Period == 7)
+)
+
+# Define period-specific sites for female
+period_sites_female <- list(
+  period_1_sites = subset(ancient_chi_female_fxl_sf, Period == 1),
+  period_2_sites = subset(ancient_chi_female_fxl_sf, Period == 2),
+  period_3_sites = subset(ancient_chi_female_fxl_sf, Period == 3),
+  period_4_sites = subset(ancient_chi_female_fxl_sf, Period == 4),
+  period_5_sites = subset(ancient_chi_female_fxl_sf, Period == 5),
+  period_6_sites = subset(ancient_chi_female_fxl_sf, Period == 6),
+  period_7_sites = subset(ancient_chi_female_fxl_sf, Period == 7)
+)
+
+# Associate datasets with corresponding sex and period-specific sites
+period_datasets <- list(
+  list(data = "data_male_Early_Neo_sampled", sites = period_sites_male$period_1_sites, sex = "male"),
+  list(data = "data_female_Early_Neo_sampled", sites = period_sites_female$period_1_sites, sex = "female"),
+  list(data = "data_male_Mid_Neo_sampled", sites = period_sites_male$period_2_sites, sex = "male"),
+  list(data = "data_female_Mid_Neo_sampled", sites = period_sites_female$period_2_sites, sex = "female"),
+  list(data = "data_male_Late_Neo_sampled", sites = period_sites_male$period_3_sites, sex = "male"),
+  list(data = "data_female_Late_Neo_sampled", sites = period_sites_female$period_3_sites, sex = "female"),
+  list(data = "data_male_Shang_Zhou_sampled", sites = period_sites_male$period_4_sites, sex = "male"),
+  list(data = "data_female_Shang_Zhou_sampled", sites = period_sites_female$period_4_sites, sex = "female"),
+  list(data = "data_male_Han_Jin_sampled", sites = period_sites_male$period_5_sites, sex = "male"),
+  list(data = "data_female_Han_Jin_sampled", sites = period_sites_female$period_5_sites, sex = "female"),
+  list(data = "data_male_Tang_Yuan_sampled", sites = period_sites_male$period_6_sites, sex = "male"),
+  list(data = "data_female_Tang_Yuan_sampled", sites = period_sites_female$period_6_sites, sex = "female"),
+  list(data = "data_male_Ming_Qing_sampled", sites = period_sites_male$period_7_sites, sex = "male"),
+  list(data = "data_female_Ming_Qing_sampled", sites = period_sites_female$period_7_sites, sex = "female")
+)
+
+# Loop through each dataset and overlay sex-specific sites
+for (dataset_info in period_datasets) {
+  dataset_name <- dataset_info$data
+  sites <- dataset_info$sites
+  sex <- dataset_info$sex
+  dataset <- get(dataset_name)
+  dataset <- na.omit(dataset)
+
+  # Create Thin Plate Spline model and grid
+  tps_model <- Tps(cbind(dataset$longitude, dataset$latitude), dataset$FXL)
+  grid <- expand.grid(
+    longitude = seq(min(dataset$longitude), max(dataset$longitude), length = 100),
+    latitude = seq(min(dataset$latitude), max(dataset$latitude), length = 100)
+  )
+  grid$FXL <- predict(tps_model, grid)
+  FXL_matrix <- matrix(grid$FXL, nrow = 100, ncol = 100)
+  FXL_raster <- raster(FXL_matrix)
+  extent(FXL_raster) <- c(range(grid$longitude), range(grid$latitude))
+
+  # Mask the raster to the basemap
+  FXL_raster_masked <- mask(FXL_raster, basemap_sp)
+
+  # Choose color scale and limits based on sex
+  if (sex == "female") {
+    color_scale <- female_colors
+    FXL_limits <- female_FXL_limits
+  } else {
+    color_scale <- male_colors
+    FXL_limits <- male_FXL_limits
+  }
+
+  # Save plot with sex-specific site overlay
+  png(filename = paste0(dataset_name, "_interpolated_Baysites.png"), width = 800, height = 600)
+  plot(FXL_raster_masked, col = color_scale, zlim = FXL_limits,
+       main = paste0(dataset_name, " - Interpolated FXL with sex-Specific Period Sites"),
+       xlab = "Longitude", ylab = "Latitude", legend = TRUE)
+  contour(FXL_raster_masked, add = TRUE, col = adjustcolor("black", alpha.f = 0.5))
+  plot(st_geometry(basemap), add = TRUE, border = "black")
+  plot(st_geometry(sites), add = TRUE, col = "red", pch = 19, cex = 1.5)  # Overlay sex-specific period sites in red
+  dev.off()
+}
+```
+
