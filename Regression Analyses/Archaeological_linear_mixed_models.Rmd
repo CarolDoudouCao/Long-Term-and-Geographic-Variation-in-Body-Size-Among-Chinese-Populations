@@ -1,0 +1,448 @@
+---
+title: "Archaeological_linear_mixed_models"
+author: "DC"
+date: "2024-11-30"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
+  word_document:
+    toc: true
+    toc_depth: '4'
+---
+# 0. Prepare the work envrionment 
+## Install necessary packages
+```{r, message = FALSE, warning = FALSE}
+# Install necessary packages
+required_packages <- c(
+  "tidyverse", "lme4", "MASS", "car", "lmerTest", "performance", 
+  "splines", "brms", "elevatr", "raster", "ggplot2", "akima", 
+  "fields", "sf", "sp", "RColorBrewer", "gstat", "broom.mixed"
+)
+
+# Install missing packages
+install_missing <- required_packages[!required_packages %in% installed.packages()[, "Package"]]
+if (length(install_missing) > 0) {
+  install.packages(install_missing)
+}
+
+# Load libraries
+lapply(required_packages, library, character.only = TRUE)
+```
+
+# 1. Import the dataset and prepare the data 
+```{r, message = FALSE, warning = FALSE}
+ancient_chi_detail <-  read_csv("data/ancient_chinese_detail_for_mixed_effects_july.csv")
+ancient_chi_detail <- ancient_chi_detail %>% 
+  mutate(time_period = as.character(time_period),
+         Subsistence = as.character(Subsistence))
+```
+
+## Assign the climatic data
+### read the climatic data
+```{r, include=FALSE}
+# Load the TIFF file
+Min_temp <- raster("data/wc2.1_30s_bio_6.tif")
+Max_temp <- raster("data/wc2.1_30s_bio_5.tif")
+Min_precip <- raster("data/wc2.1_30s_bio_14.tif")
+Max_precip <- raster("data/wc2.1_30s_bio_13.tif")
+```
+
+### assign the clmatic data to groups
+```{r}
+coordinates_ancient_detail <- ancient_chi_detail %>%
+  dplyr::select(longitude, latitude) 
+
+# Convert to a spatial points object
+points_ancient_detail <- SpatialPoints(coordinates_ancient_detail)
+```
+
+### Extract raster values for each point
+```{r}
+min_temp_values_ancient_detail <- extract(Min_temp, points_ancient_detail)
+max_temp_values_ancient_detail <- extract(Max_temp, points_ancient_detail)
+min_precip_values_ancient_detail <- extract(Min_precip, points_ancient_detail)
+max_precip_values_ancient_detail <- extract(Max_precip, points_ancient_detail)
+```
+
+### Add the extracted data back to the dataset
+```{r}
+ancient_chi_detail  <- ancient_chi_detail  %>%
+  mutate(Min_temp = min_temp_values_ancient_detail,
+         Max_temp = max_temp_values_ancient_detail,
+         Min_precip = min_precip_values_ancient_detail,
+         Max_precip = max_precip_values_ancient_detail)
+```
+
+## Seperate males and females
+```{r}
+ancient_chi_male <- ancient_chi_detail %>%
+  filter(sex == '0')
+ancient_chi_female <- ancient_chi_detail %>%
+  filter(sex == '1')
+```
+
+# 2. Influences from the environment and time periods
+## Remove rows with missing values in the columns used in the models
+### For FXL
+```{r}
+ancient_chi_male_FXL <- ancient_chi_male %>%
+  filter(!is.na(FXL))
+ancient_chi_female_FXL <- ancient_chi_female %>%
+  filter(!is.na(FXL))
+```
+
+### For TXL
+```{r}
+ancient_chi_male_TXL <- ancient_chi_male %>%
+  filter(!is.na(TXL))
+ancient_chi_female_TXL <- ancient_chi_female %>%
+  filter(!is.na(TXL))
+```
+
+### For HXL
+```{r}
+ancient_chi_male_HXL <- ancient_chi_male %>%
+  filter(!is.na(ancient_chi_male$HXL))
+ancient_chi_female_HXL <- ancient_chi_female %>%
+  filter(!is.na(ancient_chi_female$HXL))
+```
+
+### For RXL
+```{r}
+ancient_chi_male_RXL <- ancient_chi_male %>%
+  filter(!is.na(ancient_chi_male$RXL))
+ancient_chi_female_RXL <- ancient_chi_female %>%
+  filter(!is.na(ancient_chi_female$RXL))
+```
+
+### For FHD
+```{r}
+ancient_chi_male_FHD <- ancient_chi_male %>%
+  filter(!is.na(FHD))
+ancient_chi_female_FHD <- ancient_chi_female %>%
+  filter(!is.na(FHD))
+```
+
+## 2.1 Basic Linear regression
+### Fit the full linear model using lm
+#### For FXL
+```{r}
+lm_ancient_male_fxl_full <- lm(data = ancient_chi_male_FXL, FXL ~ altitude_range + Min_temp + Max_temp + Min_precip + Max_precip + time_period ) # using time_period rather than subsistence to keep independence of each predictor
+lm_ancient_female_fxl_full <- lm(data = ancient_chi_female_FXL, FXL ~ altitude_range + Min_temp + Max_temp + Min_precip + Max_precip + time_period )
+```
+
+```{r, include = FALSE}
+summary(lm_ancient_male_fxl_full)
+summary(lm_ancient_female_fxl_full)
+```
+
+#### For TXL
+```{r}
+lm_ancient_male_txl_full <- lm(data = ancient_chi_male_TXL, TXL ~ altitude_range + Min_temp + Max_temp + Min_precip + Max_precip +  time_period ) # using time_period rather than subsistence to keep independence of each predictor
+lm_ancient_female_txl_full <- lm(data = ancient_chi_female_TXL, TXL ~ altitude_range + Min_temp + Max_temp + Min_precip + Max_precip + time_period )
+```
+
+```{r, include = FALSE}
+summary(lm_ancient_male_txl_full)
+summary(lm_ancient_female_txl_full)
+```
+#### For FHD
+```{r}
+lm_ancient_male_fhd_full <- lm(data = ancient_chi_male_FHD, FHD ~ altitude_range+ Min_temp + Max_temp + Min_precip + Max_precip + time_period ) # using time_period rather than subsistence to keep independence of each predictor
+lm_ancient_female_fhd_full <- lm(data = ancient_chi_female_FHD, FHD ~ altitude_range + Min_temp + Max_temp + Min_precip + Max_precip + time_period )
+```
+
+```{r, include = FALSE}
+summary(lm_ancient_male_fhd_full)
+summary(lm_ancient_female_fhd_full)
+```
+
+## 2.2 Mixed effects analyis
+### Fit the full mixed effects model using lmer
+#### For FXL
+```{r}
+# Fit the model again with lmerTest loaded
+lme_male_fxl_full1 <- lmer(FXL ~  altitude_range + Min_temp + Max_temp + Min_precip + Max_precip + time_period + (1 | site_id), data = ancient_chi_male_FXL)
+lme_female_fxl_full1 <- lmer(FXL ~  altitude_range + Min_temp + Max_temp + Min_precip + Max_precip + time_period + (1 | site_id), data = ancient_chi_female_FXL)
+```
+
+```{r, include = FALSE}
+# Now includes p-values for fixed effects
+summary(lme_male_fxl_full1)  
+summary(lme_female_fxl_full1)
+```
+
+#### Check the model
+```{r}
+check_model(lme_male_fxl_full1, check = c("linearity", "homogeneity", "normality"))
+check_model(lme_female_fxl_full1, check = c("linearity", "homogeneity", "normality"))
+```
+
+#### For TXL
+```{r}
+# Fit the model again with lmerTest loaded
+lme_male_txl_full1 <- lmer(TXL ~  altitude_range + Min_temp + Max_temp + Min_precip + Max_precip + time_period + (1 | site_id), data = ancient_chi_male_TXL)
+lme_female_txl_full1 <- lmer(TXL ~  altitude_range + Min_temp + Max_temp + Min_precip + Max_precip + time_period + (1 | site_id), data = ancient_chi_female_TXL)
+```
+
+```{r, include = FALSE}
+# Now includes p-values for fixed effects
+summary(lme_male_txl_full1)  
+summary(lme_female_txl_full1)
+```
+
+#### Check the model
+```{r}
+check_model(lme_male_txl_full1, check = c("linearity", "homogeneity", "normality"))
+check_model(lme_female_txl_full1, check = c("linearity", "homogeneity", "normality"))
+```
+
+#### For HXL
+```{r}
+# Fit the model again with lmerTest loaded
+lme_male_hxl_full1 <- lmer(HXL ~  altitude_range + Min_temp + Min_precip + Max_precip + time_period + (1 | site_id), data = ancient_chi_male_HXL)
+lme_female_hxl_full1 <- lmer(HXL ~  altitude_range + Min_temp + Min_precip + Max_precip + time_period + (1 | site_id), data = ancient_chi_female_HXL)
+```
+
+```{r, include = FALSE}
+# Now includes p-values for fixed effects
+summary(lme_male_hxl_full1)  
+summary(lme_female_hxl_full1)
+```
+#### Check the model
+```{r}
+check_model(lme_male_hxl_full1, check = c("linearity", "homogeneity", "normality"))
+check_model(lme_female_hxl_full1, check = c("linearity", "homogeneity", "normality"))
+```
+
+#### For RXL
+```{r}
+# Fit the model again with lmerTest loaded
+lme_male_rxl_full1 <- lmer(RXL ~  altitude_range + Min_temp + Min_precip + Max_precip + time_period + (1 | site_id), data = ancient_chi_male_RXL)
+lme_female_rxl_full1 <- lmer(RXL ~  altitude_range + Min_temp + Min_precip + Max_precip + time_period + (1 | site_id), data = ancient_chi_female_RXL)
+```
+
+```{r, include = FALSE}
+# Now includes p-values for fixed effects
+summary(lme_male_rxl_full1)  
+summary(lme_female_rxl_full1)
+```
+
+#### Check the model
+```{r}
+check_model(lme_male_rxl_full1, check = c("linearity", "homogeneity", "normality"))
+check_model(lme_female_rxl_full1, check = c("linearity", "homogeneity", "normality"))
+```
+
+#### For FHD
+```{r}
+# Fit the model again with lmerTest loaded
+lme_male_fhd_full1 <- lmer(FHD ~  altitude_range + Min_temp + Max_temp + Min_precip + Max_precip + time_period + (1 | site_id), data = ancient_chi_male_FHD)
+lme_female_fhd_full1 <- lmer(FHD ~  altitude_range + Min_temp + Max_temp + Min_precip + Max_precip + time_period + (1 | site_id), data = ancient_chi_female_FHD)
+```
+
+```{r, include = FALSE}
+# Now includes p-values for fixed effects
+summary(lme_male_fhd_full1)  
+summary(lme_female_fhd_full1)
+```
+
+#### Check the model
+```{r}
+check_model(lme_male_fhd_full1, check = c("linearity", "homogeneity", "normality"))
+check_model(lme_female_fhd_full1, check = c("linearity", "homogeneity", "normality"))
+```
+
+### Plot Coefficients for full models
+#### FXL
+```{r, include = FALSE}
+# Tidy the model outputs with specified names
+tidy_male_full_fxl <- tidy(lme_male_fxl_full1, effects = "fixed")
+tidy_female_full_fxl <- tidy(lme_female_fxl_full1, effects = "fixed")
+
+# Add model labels
+tidy_male_full_fxl$model <- "Male"
+tidy_female_full_fxl$model <- "Female"
+
+# Combine both male and female tidy outputs
+tidy_combined_full_fxl <- rbind(tidy_male_full_fxl, tidy_female_full_fxl)
+
+# Add significance flag to the combined data
+tidy_combined_full_fxl$sig <- ifelse(tidy_combined_full_fxl$p.value < 0.05, "Significant", "Not Significant")
+
+# Reorder terms for plotting if necessary
+tidy_combined_full_fxl$term <- factor(tidy_combined_full_fxl$term, levels = unique(tidy_combined_full_fxl$term))
+# Calculate confidence intervals
+tidy_combined_full_fxl <- tidy_combined_full_fxl %>%
+  mutate(ci_low = estimate - 1.96 * std.error,
+         ci_high = estimate + 1.96 * std.error)
+
+# Enhanced plot with significance highlighting
+ggplot(tidy_combined_full_fxl, aes(x = term, y = estimate, fill = interaction(model, sig))) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high), 
+                position = position_dodge(0.7), width = 0.2) +
+  labs(x = "Predictor Variables", 
+       y = "Coefficient Estimate (with 95% Confidence Interval)", 
+       title = "Fixed Effects Coefficient Estimates for Male and Female Models (FXL)") +
+  scale_fill_manual(values = c("Male.Significant" = "blue", 
+                               "Female.Significant" = "red", 
+                               "Male.Not Significant" = "lightblue", 
+                               "Female.Not Significant" = "pink")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), # Angle the x-axis text for readability
+        plot.title = element_text(hjust = 0.5)) + # Center the plot title
+  coord_flip()
+```
+
+```{r}
+# Tidy the model outputs and add model labels
+tidy_male_full_fxl <- tidy(lme_male_fxl_full1, effects = "fixed") %>%
+  mutate(model = "Male")
+tidy_female_full_fxl <- tidy(lme_female_fxl_full1, effects = "fixed") %>%
+  mutate(model = "Female")
+
+# Combine male and female outputs
+tidy_combined_full_fxl <- bind_rows(tidy_male_full_fxl, tidy_female_full_fxl) %>%
+  filter(term != "(Intercept)") %>% # Remove intercept
+  mutate(
+    sig = ifelse(p.value < 0.05, "Sig", "Not Sig"), # Add significance flag
+    ci_low = estimate - 1.96 * std.error,          # Compute lower CI
+    ci_high = estimate + 1.96 * std.error          # Compute upper CI
+  )
+
+# Reorder terms for plotting
+tidy_combined_full_fxl$term <- factor(tidy_combined_full_fxl$term, levels = unique(tidy_combined_full_fxl$term))
+
+# Enhanced plot with confidence intervals
+plot_full_fxl_coefficients <- ggplot(tidy_combined_full_fxl, aes(x = estimate, y = term, fill = interaction(model, sig))) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(xmin = ci_low, xmax = ci_high), 
+                position = position_dodge(0.7), width = 0.2) +
+  labs(
+    y = "Predictor Variables", 
+    x = "Coefficient Estimate (with 95% Confidence Interval)", 
+    title = "Fixed Effects Coefficient Estimates for Male and Female Models (FXL)"
+  ) +
+  # Custom fill scale to distinguish significance
+  scale_fill_manual(values = c(
+    "Male.Sig" = "blue", 
+    "Female.Sig" = "red", 
+    "Male.Not Sig" = "lightblue", 
+    "Female.Not Sig" = "pink"
+  )) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(angle = 0, hjust = 1, size = 16), # Readable y-axis text
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 16), # Readable x-axis text
+    axis.title.y = element_text(size = 16), # Enlarged y-axis title
+    axis.title.x = element_text(size = 16), # Enlarged x-axis title
+    plot.title = element_text(hjust = 0.5, size = 18), # Centered and enlarged title
+    legend.position = "bottom", # Legend at bottom
+    legend.text = element_text(size = 16), # Enlarged legend text
+    legend.title = element_text(size = 16) # Enlarged legend title
+  ) +
+  coord_flip()
+```
+
+#### TXL
+```{r}
+# Tidy the model outputs and add model labels
+tidy_male_full_txl <- tidy(lme_male_txl_full1, effects = "fixed") %>%
+  mutate(model = "Male")
+tidy_female_full_txl <- tidy(lme_female_txl_full1, effects = "fixed") %>%
+  mutate(model = "Female")
+
+# Combine male and female outputs
+tidy_combined_full_txl <- bind_rows(tidy_male_full_txl, tidy_female_full_txl) %>%
+  filter(term != "(Intercept)") %>% # Remove intercept
+  mutate(
+    sig = ifelse(p.value < 0.05, "Sig", "Not Sig"),         # Add significance flag
+    ci_low = estimate - 1.96 * std.error,                  # Compute lower CI
+    ci_high = estimate + 1.96 * std.error                  # Compute upper CI
+  )
+
+# Reorder terms for plotting
+tidy_combined_full_txl$term <- factor(tidy_combined_full_txl$term, levels = unique(tidy_combined_full_txl$term))
+
+# Create the plot
+plot_full_txl_coefficients <- ggplot(tidy_combined_full_txl, aes(y = term, x = estimate, fill = interaction(model, sig))) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(xmin = ci_low, xmax = ci_high), 
+                position = position_dodge(0.7), width = 0.2) +
+  labs(
+    y = "Predictor Variables", 
+    x = "Coefficient Estimate (with 95% Confidence Interval)", 
+    title = "Fixed Effects Coefficient Estimates for Male and Female Models (TXL)"
+  ) +
+  # Custom fill scale for significance and model interaction
+  scale_fill_manual(values = c(
+    "Male.Sig" = "blue", 
+    "Female.Sig" = "red", 
+    "Male.Not Sig" = "lightblue", 
+    "Female.Not Sig" = "pink"
+  )) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(angle = 0, hjust = 1, size = 16), # Readable y-axis text
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 16), # Readable x-axis text
+    axis.title.y = element_text(size = 16), # Enlarged y-axis title
+    axis.title.x = element_text(size = 16), # Enlarged x-axis title
+    plot.title = element_text(hjust = 0.5, size = 18), # Centered and enlarged title
+    legend.position = "bottom", # Legend at the bottom
+    legend.text = element_text(size = 16), # Enlarged legend text
+    legend.title = element_text(size = 16) # Enlarged legend title
+  ) +
+  coord_flip()
+```
+#### FHD
+```{r}
+# Tidy the model outputs and add model labels
+tidy_male_full_fhd <- tidy(lme_male_fhd_full1, effects = "fixed") %>%
+  mutate(model = "Male")
+tidy_female_full_fhd <- tidy(lme_female_fhd_full1, effects = "fixed") %>%
+  mutate(model = "Female")
+
+# Combine male and female outputs
+tidy_combined_full_fhd <- bind_rows(tidy_male_full_fhd, tidy_female_full_fhd) %>%
+  filter(term != "(Intercept)") %>% # Remove intercept
+  mutate(
+    sig = ifelse(p.value < 0.05, "Sig", "Not Sig"),         # Add significance flag
+    ci_low = estimate - 1.96 * std.error,                  # Compute lower CI
+    ci_high = estimate + 1.96 * std.error                  # Compute upper CI
+  )
+
+# Reorder terms for plotting
+tidy_combined_full_fhd$term <- factor(tidy_combined_full_fhd$term, levels = unique(tidy_combined_full_fhd$term))
+
+# Create the plot
+plot_full_fhd_coefficients <- ggplot(tidy_combined_full_fhd, aes(y = term, x = estimate, fill = interaction(model, sig))) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(xmin = ci_low, xmax = ci_high), 
+                position = position_dodge(0.7), width = 0.2) +
+  labs(
+    y = "Predictor Variables", 
+    x = "Coefficient Estimate (with 95% Confidence Interval)", 
+    title = "Fixed Effects Coefficient Estimates for Male and Female Models (FHD)"
+  ) +
+  scale_fill_manual(values = c(
+    "Male.Sig" = "blue", 
+    "Female.Sig" = "red", 
+    "Male.Not Sig" = "lightblue", 
+    "Female.Not Sig" = "pink"
+  )) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(angle = 0, hjust = 1, size = 16),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 16),
+    axis.title.y = element_text(size = 16),
+    axis.title.x = element_text(size = 16),
+    plot.title = element_text(hjust = 0.5, size = 18),
+    legend.position = "bottom",
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 16)
+  ) +
+  coord_flip()
+```
