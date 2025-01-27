@@ -71,8 +71,7 @@ To examine relationships between body dimensions, environmental factors, and tim
 ### Methodology
 To address the uneven distribution of samples in archaeological datasets, a Bayesian additive mixed model was applied to model femur lengths (FXL, n = 2,427). The model:  
 - Utilized a smooth function to account for spatial (latitude/longitude), temporal, and sex-based variation.  
-- Incorporated site-specific random effects to control for intra-site variability.  
-- Employed informative priors to account for uncertainty in measurements.  
+- Incorporated site-specific random effects to control for intra-site variability.   
 
 ### Computation
 - Conducted using Markov Chain Monte Carlo (MCMC) methods with the Metropolis-Hastings algorithm.  
