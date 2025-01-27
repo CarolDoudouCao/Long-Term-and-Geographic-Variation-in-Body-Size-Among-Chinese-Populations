@@ -1,0 +1,953 @@
+---
+title: "Contemporary_Chinese_groups"
+author: "DC"
+date: "2023-12-07"
+output:
+  word_document:
+    toc: true
+    toc_depth: '4'
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
+---
+# Install packages
+```{r, message = FALSE, warning = FALSE}
+# List of required packages
+required_packages <- c(
+  "tidyverse",      # Data manipulation and visualization
+  "sf",             # Handling spatial data
+  "raster",         # Raster data operations
+  "ggmap",          # Mapping and spatial visualization
+  "sp",             # Spatial data classes and methods (supports sf)
+  "akima",          # Interpolation of irregularly spaced data
+  "rnaturalearth",  # Natural Earth map data
+  "car",            # Companion to Applied Regression
+  "MASS",           # Various statistical methods
+  "sandwich",       # Robust covariance matrix estimators
+  "lmtest",         # Testing linear regression models
+  "scales",         # Scaling functions for ggplot2
+  "gstat" ,         # Geostatistical modeling and kriging
+  "terra"
+)
+
+# Identify missing packages and install them
+missing_packages <- setdiff(required_packages, rownames(installed.packages()))
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+# Load all required libraries
+invisible(lapply(required_packages, library, character.only = TRUE))
+```
+
+# 1. Prepare the data
+Read the group data on contemporary populations
+```{r, message = FALSE}
+groups <- read_csv("data/modern_multiple_groups.csv")
+```
+
+## Assign the climatic data
+### Read the climatic data
+```{r}
+# Load the TIFF file
+Min_temp <- raster("data/wc2.1_30s_bio_6.tif")
+Max_temp <- raster("data/wc2.1_30s_bio_5.tif")
+Min_precip <- raster("data/wc2.1_30s_bio_14.tif")
+Max_precip <- raster("data/wc2.1_30s_bio_13.tif")
+```
+
+### Assign the clmatic data to modern groups
+```{r}
+coordinates <- groups %>%
+  dplyr::select(`Longitude (E)`, `Latitude (N)`)  # Use backticks around column names with spaces
+
+# Convert to a spatial points object
+points <- SpatialPoints(coordinates)
+```
+
+```{r}
+# Extract raster values for each point
+min_temp_values <- extract(Min_temp, points)
+max_temp_values <- extract(Max_temp, points)
+min_precip_values <- extract(Min_precip, points)
+max_precip_values <- extract(Max_precip, points)
+```
+
+```{r}
+# Add the extracted data back to the dataset
+groups <- groups %>%
+  mutate(Min_temp = min_temp_values,
+         Max_temp = max_temp_values,
+         Min_precip = min_precip_values,
+         Max_precip = max_precip_values)
+```
+
+## Get China Map
+```{r, message =FALSE}
+shapefile_path <- "data/bou1_4p.shp"
+# Read the shapefile
+china_shape <- st_read(shapefile_path)
+```
+
+# 2. Regression analysis
+## Separate data by sex
+```{r}
+# Use dplyr::filter() to avoid conflicts
+male_data <- dplyr::filter(groups, Sex == "M")
+female_data <- dplyr::filter(groups, Sex == "F")
+
+# Convert necessary columns to numeric
+male_data <- male_data %>%
+  mutate(Stature = as.numeric(Stature_cm),
+         Body_mass = as.numeric(Body_mass_kg),
+         Sitting_height = as.numeric(R_Sitting_ht),
+         Min_temp = as.numeric(Min_temp),
+         Max_temp = as.numeric(Max_temp),
+         Min_precip = as.numeric(Min_precip),
+         Max_precip = as.numeric(Max_precip))
+
+
+female_data <- female_data %>%
+  mutate(Stature = as.numeric(Stature_cm),
+         Body_mass = as.numeric(Body_mass_kg),
+         Sitting_height = as.numeric(R_Sitting_ht),
+         Min_temp = as.numeric(Min_temp),
+         Max_temp = as.numeric(Max_temp),
+         Min_precip = as.numeric(Min_precip),
+         Max_precip = as.numeric(Max_precip))
+```
+
+## 2.1 Ordinary linear regression
+```{r}
+# Fit linear models for males
+male_stature_lm <- lm(Stature ~ Min_temp + Max_temp + Min_precip + Max_precip + Altitude_range + Time, data = male_data)
+male_sitting_lm <- lm(Sitting_height ~ Min_temp + Max_temp + Min_precip + Max_precip +Altitude_range+ Time, data = male_data)
+male_bodymass_lm <- lm(Body_mass ~ Min_temp + Max_temp + Min_precip + Max_precip + Altitude_range+ Time, data = male_data)
+
+# Fit linear models for females
+female_stature_lm <- lm(Stature ~ Min_temp + Max_temp + Min_precip + Max_precip + Altitude_range+ Time, data = female_data)
+female_sitting_lm <- lm(Sitting_height ~ Min_temp + Max_temp + Min_precip + Max_precip + Altitude_range+ Time, data = female_data)
+female_bodymass_lm <- lm(Body_mass ~ Min_temp + Max_temp + Min_precip + Max_precip + Altitude_range+ Time, data = female_data)
+```
+```{r}
+# Function to check model assumptions
+check_assumptions <- function(model) {
+  par(mfrow=c(2,2))  # Set up plot area for 4 diagnostic plots
+
+  # 1. Residuals vs Fitted: Check for linearity
+  plot(model, which=1, main="Residuals vs Fitted")
+
+  # 2. Normal Q-Q: Check for normality of residuals
+  plot(model, which=2, main="Normal Q-Q")
+
+  # 3. Scale-Location: Check for homoscedasticity (constant variance)
+  plot(model, which=3, main="Scale-Location")
+
+  # 4. Residuals vs Leverage: Check for influential points
+  plot(model, which=5, main="Residuals vs Leverage")
+}
+
+# Function to check multicollinearity
+check_vif <- function(model) {
+  vif(model)  # VIF values above 5 indicate multicollinearity
+}
+
+# Check model assumptions and multicollinearity for males
+check_assumptions(male_stature_lm)
+check_assumptions(male_sitting_lm)
+check_assumptions(male_bodymass_lm)
+
+check_vif(male_stature_lm)
+check_vif(male_sitting_lm)
+check_vif(male_bodymass_lm)
+
+# Check model assumptions and multicollinearity for females
+check_assumptions(female_stature_lm)
+check_assumptions(female_sitting_lm)
+check_assumptions(female_bodymass_lm)
+
+check_vif(female_stature_lm)
+check_vif(female_sitting_lm)
+check_vif(female_bodymass_lm)
+```
+
+## 2.2 Robust regression
+```{r}
+# Robust regression for male models
+male_stature_rlm <- rlm(Stature ~ Min_temp + Max_temp + Min_precip + Max_precip + Altitude_range +Time, data = male_data)
+male_sitting_rlm <- rlm(Sitting_height ~ Min_temp + Max_temp + Min_precip + Max_precip + Altitude_range +Time, data = male_data)
+male_bodymass_rlm <- rlm(Body_mass ~ Min_temp + Max_temp + Min_precip + Max_precip + Altitude_range +Time, data = male_data)
+
+# Robust regression for female models
+female_stature_rlm <- rlm(Stature ~ Min_temp + Max_temp + Min_precip + Max_precip + Altitude_range +Time, data = female_data)
+female_sitting_rlm <- rlm(Sitting_height ~ Min_temp + Max_temp + Min_precip + Max_precip + Altitude_range +Time, data = female_data)
+female_bodymass_rlm <- rlm(Body_mass ~ Min_temp + Max_temp + Min_precip + Max_precip + Altitude_range+Time, data = female_data)
+```
+
+### Plot coefficients
+```{r}
+# Combine male and female data for plotting
+combined_data <- rbind(
+  data.frame(male_combined_data, Sex = "Male"),
+  data.frame(female_combined_data, Sex = "Female")
+)
+
+# Add a column for asterisks to indicate significant predictors
+combined_data$Significant_Asterisk <- ifelse(combined_data$Significance == "Significant", "*", "")
+
+combined_plot <- ggplot(combined_data, aes(y = Coefficient, x = Variable)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", fill = "lightblue") +  # Uniform fill color
+  
+  geom_errorbar(aes(ymin = Coefficient - 1.96 * Std_Error, ymax = Coefficient + 1.96 * Std_Error), width = 0.2, position = position_dodge(0.9)) +
+  geom_text(aes(label = Significant_Asterisk), color = "red", size = 5, vjust = -0.5, position = position_dodge(width = 0.9)) +
+  facet_grid(Model ~ Sex) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Horizontal line at 0 on the y-axis
+  theme(axis.text.x = element_text(angle = 75, hjust = 1), legend.position = "bottom") +  # Adjusted axis text for readability
+  labs(title = "Male and Female Model Coefficients (Robust Regression)", y = "Coefficient", x = "Variable")
+
+# Display the combined plot
+print(combined_plot)
+```
+  
+  # 4. Print summary for robust linear models (rlm)
+  if (inherits(model, "rlm")) {
+    cat("Summary for robust linear model (RLM):\n")
+    print(summary(model))
+  }
+  
+  cat("\nModel diagnostics completed.\n")
+}
+
+# Diagnose a standard linear model:
+ diagnose_model(male_stature_lm)
+
+ # Diagnose a robust linear model:
+ diagnose_model(male_stature_rlm)
+
+# Diagnose with robust standard errors for a standard linear model:
+ diagnose_model(male_stature_lm, robust_se = TRUE)
+```
+
+## 2.3 Compare the Han, Sherpa and Tibetan Groups
+```{r}
+# Set the desired order for the Ethnic_Group factor
+filtered_data$Ethnic_Group <- factor(filtered_data$Ethnic_Group, levels = c("Han", "Tibetan", "Sherpa"))
+# Convert Longitude and Latitude to numeric
+filtered_data$Longitude_E <- as.numeric(filtered_data$Longitude_E)
+filtered_data$Latitude_N <- as.numeric(filtered_data$Latitude_N)
+```
+
+```{r}
+# Set the desired order for the Ethnic_Group factor, including all groups
+groups$Ethnic_Group <- factor(groups$Ethnic_Group, levels = unique(groups$Ethnic_Group))
+
+# Create a new column named 'ethnic_group_2' for the desired classifications
+groups <- groups %>%
+  mutate(ethnic_group_2 = case_when(
+    Ethnic_Group == "Tibetan" ~ "Tibetan",
+    Ethnic_Group == "Sherpa" ~ "Sherpa",
+    Ethnic_Group == "Han" & `Latitude (N)` > 34 ~ "Han (Northern)",
+    Ethnic_Group == "Han" & `Longitude (E)` <= 34 ~ "Han (Southern)",
+    TRUE ~ NA_character_
+  ))
+```
+
+```{r, warning = FALSE}
+# Plot with merged time periods for Body Mass with linear regression line using 'ethnic_group_2'
+body_mass_plot <- ggplot(groups_filtered, aes(x = Stature_cm, y = Body_mass_kg, color = Sex, shape = ethnic_group_2, linetype = ethnic_group_2)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +  # Add linear regression line
+  labs(x = "Stature (cm)", y = "Body Mass", title = "Stature vs Body Mass by Ethnic Group and Time Period", shape = "Ethnic group", linetype = "Group") +
+  theme(legend.position = "bottom") +
+  facet_grid(Sex ~ Time_period_merged) +
+  scale_shape_manual(values = c(1, 2, 3, 4)) +  # Set different shapes for ethnic groups
+  scale_linetype_manual(values = c("solid", "dashed","twodash", "blank")) +  # Set different line types for ethnic groups
+  guides(shape = guide_legend(nrow = 2), linetype = guide_legend(nrow = 2), color = guide_legend(nrow = 2))
+body_mass_plot
+```
+
+# 3 Interpolation over time and space
+## 3.1 Stature
+```{r}
+# Convert columns to numeric, replacing non-numeric values with NA
+convert_to_numeric <- function(df, columns) {
+  for (col in columns) {
+    df[[col]] <- as.numeric(df[[col]])
+  }
+  return(df)
+}
+
+# Apply the function to convert 'Body_mass(kg)' and 'R_Sitting_ht' to numeric
+groups <- convert_to_numeric(groups, c("Body_mass(kg)", "R_Sitting_ht"))
+
+# Function to subset data based on sex and time period
+subset_data <- function(df, sex, time_periods) {
+  subset(df, Sex == sex & Time_period %in% time_periods,
+         select = c(`Latitude (N)`, `Longitude (E)`, `Stature(cm)`, `Body_mass(kg)`, R_Sitting_ht, 
+                    Ethnic_Group, Time, Altitude_range, Relative_Living_Bi_iliaca_breadth))
+}
+
+# Subset data for each group
+ht_china_male_early <- subset_data(groups, "M", c(1, 2))
+ht_china_female_early <- subset_data(groups, "F", c(1, 2))
+ht_china_male_late <- subset_data(groups, "M", c(3))
+ht_china_female_late <- subset_data(groups, "F", c(3))
+```
+
+```{r, warning = FALSE}
+# Function to rename columns for all datasets
+rename_columns <- function(df) {
+  names(df) <- c("Latitude_N", "Longitude_E", "Stature_cm", "Body_mass_kg", "R_Sitting_ht","Ethnic_Group", "Time", "Altitude_range")
+  return(df)
+}
+
+# Apply the rename function to all datasets
+ht_china_male_early <- rename_columns(ht_china_male_early)
+ht_china_female_early <- rename_columns(ht_china_female_early)
+ht_china_male_late <- rename_columns(ht_china_male_late)
+ht_china_female_late <- rename_columns(ht_china_female_late)
+```
+
+```{r}
+# Define the IDW interpolation function
+perform_idw_interpolation <- function(df, filename) {
+  # Check if the dataframe has coordinates set properly
+  if (!("Longitude_E" %in% names(df)) || !("Latitude_N" %in% names(df)) || !("Stature_cm" %in% names(df))) {
+    stop("The data frame must contain 'Longitude_E', 'Latitude_N', and 'Stature_cm' columns.")
+  }
+  
+  # Define the grid extent
+  xmin <- 70
+  xmax <- 140
+  ymin <- 6
+  ymax <- 60
+
+  # Set the number of cells in x and y dimensions to ensure equal cell size
+  cell_size <- (xmax - xmin) / 400  # Assuming 400 cells in the x-direction
+
+  # Create raster with equal horizontal and vertical resolution
+  htrChina <- raster(
+    xmn = xmin, xmx = xmax,
+    ymn = ymin, ymx = ymax,
+    res = cell_size,  # Specify resolution to be the same in both x and y
+    crs = "+proj=longlat +datum=WGS84"
+  )
+
+  # Convert the raster to points to extract the coordinates
+  htrChina_points <- rasterToPoints(htrChina, spatial = TRUE)
+
+  # Set spatial coordinates for the input data frame
+  coordinates(df) <- ~ Longitude_E + Latitude_N
+
+  # Calculate distances between observation points and raster grid points
+  dists <- spDists(
+    x = coordinates(df),
+    y = coordinates(htrChina_points),
+    longlat = TRUE
+  )
+
+  # Inverse distance weighted interpolation
+  idp <- 2
+  inv.w <- (1 / (dists ^ idp))
+  z <- (t(inv.w) %*% matrix(df$Stature_cm)) / apply(inv.w, 2, sum)
+
+  # Update the raster with predicted values
+  htpred.China <- htrChina
+  values(htpred.China) <- z
+
+  # Export the data as a raster file in ASCII format
+  writeRaster(htpred.China, filename = filename, format = "ascii", overwrite = TRUE)
+}
+
+# Apply the function to each group
+# Interpolation for Early Female Population
+perform_idw_interpolation(ht_china_male_early, "HT_IDW2_China_male_early.asc")
+
+perform_idw_interpolation(ht_china_female_early, "HT_IDW2_China_female_early.asc")
+
+# Interpolation for Late Male Population
+perform_idw_interpolation(ht_china_male_late, "HT_IDW2_China_male_late.asc")
+
+# Interpolation for Late Female Population
+perform_idw_interpolation(ht_china_female_late, "HT_IDW2_China_female_late.asc")
+```
+
+```{r}
+htpred_male_early <- raster("HT_IDW2_China_male_early.asc")
+htpred_female_early <- raster("HT_IDW2_China_female_early.asc")
+htpred_male_late <- raster("HT_IDW2_China_male_late.asc")
+htpred_female_late <- raster("HT_IDW2_China_female_late.asc")
+
+# Convert the rasters to data frames
+htpred_male_early_df <- as.data.frame(htpred_male_early, xy = TRUE)
+colnames(htpred_male_early_df) <- c("Longitude", "Latitude", "Stature")
+
+htpred_female_early_df <- as.data.frame(htpred_female_early, xy = TRUE)
+colnames(htpred_female_early_df) <- c("Longitude", "Latitude", "Stature")
+
+htpred_male_late_df <- as.data.frame(htpred_male_late, xy = TRUE)
+colnames(htpred_male_late_df) <- c("Longitude", "Latitude", "Stature")
+
+htpred_female_late_df <- as.data.frame(htpred_female_late, xy = TRUE)
+colnames(htpred_female_late_df) <- c("Longitude", "Latitude", "Stature")
+```
+
+```{r}
+# Function to plot raster heatmap overlaid on the China base map with dataset points by Ethnic Group using shapes and colors
+plot_heatmap_with_points_on_china_map <- function(raster_df, points_df, title) {
+  # Determine the number of unique ethnic groups
+  unique_ethnic_groups <- unique(points_df$Ethnic_Group)
+  num_groups <- length(unique_ethnic_groups)
+
+  # Define shape values for each ethnic group
+  # Assign specific shapes to Han and Tibetan groups
+  shape_values <- rep(c(15:22), length.out = num_groups)
+  names(shape_values) <- unique_ethnic_groups
+  shape_values["Han"] <- 17      # Unify the Han group shape to a triangle
+  shape_values["Tibetan"] <- 16  # Unify the Tibetan group shape to a circle
+shape_values["Sherpa"] <- 15  # Unify the Tibetan group shape to a circle
+  ggplot() +
+    geom_sf(data = china_shape, fill = "white", color = "black") +  # Plot the base map of China
+    geom_raster(data = raster_df, aes(x = Longitude, y = Latitude, fill = Stature), alpha = 0.7) +  # Plot the heatmap
+    geom_point(data = points_df, aes(x = Longitude_E, y = Latitude_N, shape = Ethnic_Group, color = Ethnic_Group), size = 1) +  # Plot points using different shapes and colors
+    scale_shape_manual(values = shape_values) +  # Assign custom shapes, including unified Han and Tibetan group shapes
+    scale_color_viridis_d(option = "plasma") +  # Assign colors using viridis color palette (option 'plasma' for variety)
+    scale_fill_viridis_c() +  # Use viridis color scale for the heatmap
+    theme_minimal() +
+    labs(title = title,
+         x = "Longitude",
+         y = "Latitude",
+         fill = "Stature",
+         shape = "Ethnic Group",
+         color = "Ethnic Group") +  # Include color legend for further differentiation
+    coord_sf()  # Keep the coordinate reference consistent
+}
+
+# Plotting each dataset separately with the heatmap and the China base map
+
+# Plot heatmap for Early Male Population with points
+plot1 <- plot_heatmap_with_points_on_china_map(htpred_male_early_df, ht_china_male_early, "Heatmap with Points - Early Male Population")
+
+# Plot heatmap for Early Female Population with points
+plot2 <- plot_heatmap_with_points_on_china_map(htpred_female_early_df, ht_china_female_early, "Heatmap with Points - Early Female Population")
+
+# Plot heatmap for Late Male Population with points
+plot3 <- plot_heatmap_with_points_on_china_map(htpred_male_late_df, ht_china_male_late, "Heatmap with Points - Late Male Population")
+
+# Plot heatmap for Late Female Population with points
+plot4 <- plot_heatmap_with_points_on_china_map(htpred_female_late_df, ht_china_female_late, "Heatmap with Points - Late Female Population")
+```
+
+```{r}
+# Set global min and max stature values across datasets for consistent heatmap scale
+global_min <- min(htpred_female_early_df$Stature, na.rm = TRUE)
+global_max <- max(htpred_male_late_df$Stature, na.rm = TRUE)
+
+# Function to plot raster heatmap overlaid on the China base map with dataset points by Ethnic Group using shapes and colors
+plot_heatmap_with_points_on_china_map <- function(raster_df, points_df, title, group_name) {
+  # Determine the number of unique ethnic groups
+  unique_ethnic_groups <- unique(points_df$Ethnic_Group)
+  num_groups <- length(unique_ethnic_groups)
+
+  # Define shape values for each ethnic group
+  # Assign specific shapes to Han, Tibetan, and Sherpa groups
+  shape_values <- rep(c(1:14), length.out = num_groups)
+  names(shape_values) <- unique_ethnic_groups
+  shape_values["Han"] <- 15     # Unify the Han group shape 
+  shape_values["Tibetan"] <-19  # Unify the Tibetan group shape
+  shape_values["Sherpa"] <- 17 # Assign specific shape for Sherpa group
+  shape_values["Mongols"] <- 18 # Assign specific shape for Mongols group
+  shape_values["Zhuang"] <- 20 # Assign specific shape for Zhuang group
+  shape_values["Uyghurs"] <- 21 # Assign specific shape for Uyghurs group
+  shape_values["Gelao"] <- 22 # Assign specific shape for Gelao group
+  # Create the plot with unified layout settings
+  p <- ggplot() +
+    geom_sf(data = china_shape, fill = "white", color = "black") +  # Plot the base map of China
+    geom_raster(data = raster_df, aes(x = Longitude, y = Latitude, fill = Stature), alpha = 0.7) +  # Plot the heatmap
+    geom_point(data = points_df, aes(x = Longitude_E, y = Latitude_N, shape = Ethnic_Group, color = Ethnic_Group), size = 1) +  # Plot points using different shapes and colors
+    scale_shape_manual(values = shape_values) +  # Assign custom shapes, including unified Han, Tibetan, and Sherpa group shapes
+    scale_color_viridis_d(option = "plasma") +  # Assign colors using viridis color palette (option 'plasma' for variety)
+    scale_fill_viridis_c(limits = c(global_min, global_max)) +  # Use viridis color scale for the heatmap with unified limits
+    theme_minimal() +
+    labs(title = title,
+         x = "Longitude",
+         y = "Latitude",
+         fill = "Stature(cm)",
+         shape = "Ethnic Group",
+         color = "Ethnic Group",
+         caption = group_name) +  # Add the group name under the plot
+    theme(
+      plot.title = element_text(size = 10, face = "bold", hjust = 0.5),  # Center the title and make it bold
+      axis.title = element_text(size = 10),  # Standardize axis title font size
+      axis.text = element_text(size = 10),   # Standardize axis label size
+      legend.position = "right",              # Move the legend (scale) to the left
+      legend.title = element_text(size = 10),# Standardize legend title size
+      legend.text = element_text(size = 8), # Standardize legend text size
+      plot.margin = unit(c(1, 1, 1, 1), "cm") # Set consistent plot margins
+    ) +
+    coord_sf()  # Keep the coordinate reference consistent
+
+  return(p)
+}
+
+# Plotting each dataset separately with the heatmap and the China base map
+
+# Plot heatmap for Early Male Population with points
+plot1 <- plot_heatmap_with_points_on_china_map(htpred_male_early_df, ht_china_male_early, "Heatmap with Points - Early Male Population", "Early Male Population")
+
+# Plot heatmap for Early Female Population with points
+plot2 <- plot_heatmap_with_points_on_china_map(htpred_female_early_df, ht_china_female_early, "Heatmap with Points - Early Female Population", "Early Female Population")
+
+# Plot heatmap for Late Male Population with points
+plot3 <- plot_heatmap_with_points_on_china_map(htpred_male_late_df, ht_china_male_late, "Heatmap with Points - Late Male Population", "Late Male Population")
+
+# Plot heatmap for Late Female Population with points
+plot4 <- plot_heatmap_with_points_on_china_map(htpred_female_late_df, ht_china_female_late, "Heatmap with Points - Late Female Population", "Late Female Population")
+```
+## 3.2 Body Mass
+```{r}
+# Convert columns to numeric, replacing non-numeric values with NA
+convert_to_numeric <- function(df, columns) {
+  for (col in columns) {
+    df[[col]] <- suppressWarnings(as.numeric(df[[col]]))  # Suppress warnings to avoid output clutter
+  }
+  return(df)
+}
+
+# Apply the function to convert columns to numeric
+groups <- convert_to_numeric(groups, c("Body_mass(kg)", "R_Sitting_ht"))
+
+# Function to subset data based on sex and time period
+subset_data <- function(df, sex, time_periods) {
+  subset(df, Sex == sex & Time_period %in% time_periods,
+         select = c(`Latitude (N)`, `Longitude (E)`, `Stature(cm)`, `Body_mass(kg)`, `R_Sitting_ht`, 
+                    Ethnic_Group, Time, Altitude_range, `Relative_Living_Bi_iliaca_breadth`))
+}
+
+# Subset data for each group
+ht_china_male_early <- subset_data(groups, "M", c(1, 2))
+ht_china_female_early <- subset_data(groups, "F", c(1, 2))
+ht_china_male_late <- subset_data(groups, "M", c(3))
+ht_china_female_late <- subset_data(groups, "F", c(3))
+
+# Function to rename columns for all datasets
+rename_columns <- function(df) {
+  names(df) <- c("Latitude_N", "Longitude_E", "Stature_cm", "Body_mass_kg", "R_Sitting_ht", 
+                 "Ethnic_Group", "Time", "Altitude_range", "Relative_Living_Bi_iliaca_breadth")
+  return(df)
+}
+
+# Apply the rename function to all datasets
+ht_china_male_early <- rename_columns(ht_china_male_early)
+ht_china_female_early <- rename_columns(ht_china_female_early)
+ht_china_male_late <- rename_columns(ht_china_male_late)
+ht_china_female_late <- rename_columns(ht_china_female_late)
+
+# Function to set spatial coordinates and plot points for each dataset
+plot_points <- function(df, title, color_function = heat.colors) {
+  # Set spatial coordinates
+  coordinates(df) <- ~ Longitude_E + Latitude_N
+  
+  # Create a plot for the current dataset using a color function
+  df$color_index <- as.numeric(cut(df$Body_mass_kg, breaks = 10))  # Categorize Body_mass_kg into 10 bins
+  plot(df, col = color_function(10)[df$color_index], pch = 16, cex = 0.6, main = title)
+}
+
+# Set up the plotting area to have 2 rows and 2 columns
+par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+
+# Plot each dataset
+plot_points(ht_china_male_early, title = "Early Male Population")
+plot_points(ht_china_female_early, title = "Early Female Population")
+plot_points(ht_china_male_late, title = "Late Male Population")
+plot_points(ht_china_female_late, title = "Late Female Population")
+```
+
+```{r}
+# Define the IDW interpolation function
+perform_idw_interpolation <- function(df, filename) {
+  # Check if the dataframe has coordinates set properly
+  if (!("Longitude_E" %in% names(df)) || !("Latitude_N" %in% names(df)) || !("Body_mass_kg" %in% names(df))) {
+    stop("The data frame must contain 'Longitude_E', 'Latitude_N', and 'Body_mass_kg' columns.")
+  }
+  
+  # Remove rows with NA values in relevant columns
+  df <- df[!is.na(df$Longitude_E) & !is.na(df$Latitude_N) & !is.na(df$Body_mass_kg), ]
+  
+  # Define the grid extent
+  xmin <- 70
+  xmax <- 140
+  ymin <- 6
+  ymax <- 60
+
+  # Set the number of cells in x and y dimensions to ensure equal cell size
+  cell_size <- (xmax - xmin) / 400  # Assuming 400 cells in the x-direction
+
+  # Create raster with equal horizontal and vertical resolution
+  htrChina <- raster(
+    xmn = xmin, xmx = xmax,
+    ymn = ymin, ymx = ymax,
+    res = cell_size,  # Specify resolution to be the same in both x and y
+    crs = "+proj=longlat +datum=WGS84"
+  )
+
+  # Convert the raster to points to extract the coordinates
+  htrChina_points <- rasterToPoints(htrChina, spatial = TRUE)
+
+  # Set spatial coordinates for the input data frame
+  coordinates(df) <- ~ Longitude_E + Latitude_N
+
+  # Calculate distances between observation points and raster grid points
+  dists <- spDists(
+    x = coordinates(df),
+    y = coordinates(htrChina_points),
+    longlat = TRUE
+  )
+
+  # Inverse distance weighted interpolation
+  idp <- 2
+  inv.w <- (1 / (dists ^ idp))
+  z <- (t(inv.w) %*% matrix(df$Body_mass_kg)) / apply(inv.w, 2, sum)
+
+  # Update the raster with predicted values
+  htpred.China <- htrChina
+  values(htpred.China) <- z
+
+  # Export the data as a raster file in ASCII format
+  writeRaster(htpred.China, filename = filename, format = "ascii", overwrite = TRUE)
+}
+
+# Apply the function to each group
+perform_idw_interpolation(ht_china_male_early, "HT_IDW2_China_male_early.asc")
+
+# Interpolation for Early Female Population
+perform_idw_interpolation(ht_china_female_early, "HT_IDW2_China_female_early.asc")
+
+# Interpolation for Late Male Population
+perform_idw_interpolation(ht_china_male_late, "HT_IDW2_China_male_late.asc")
+
+# Interpolation for Late Female Population
+perform_idw_interpolation(ht_china_female_late, "HT_IDW2_China_female_late.asc")
+```
+
+```{r}
+# Load the interpolated rasters
+htpred_male_early <- raster("HT_IDW2_China_female_early.asc")
+htpred_female_early <- raster("HT_IDW2_China_female_early.asc")
+htpred_male_late <- raster("HT_IDW2_China_male_late.asc")
+htpred_female_late <- raster("HT_IDW2_China_female_late.asc")
+
+# Convert the rasters to data frames
+htpred_male_early_df <- as.data.frame(htpred_male_early, xy = TRUE)
+colnames(htpred_male_early_df) <- c("Longitude", "Latitude", "Body_mass_kg")
+
+htpred_female_early_df <- as.data.frame(htpred_female_early, xy = TRUE)
+colnames(htpred_female_early_df) <- c("Longitude", "Latitude", "Body_mass_kg")
+
+htpred_male_late_df <- as.data.frame(htpred_male_late, xy = TRUE)
+colnames(htpred_male_late_df) <- c("Longitude", "Latitude", "Body_mass_kg")
+
+htpred_female_late_df <- as.data.frame(htpred_female_late, xy = TRUE)
+colnames(htpred_female_late_df) <- c("Longitude", "Latitude", "Body_mass_kg")
+```
+
+```{r}
+# Calculate global min and max for Body_mass_kg across all datasets to unify the scale
+global_min <- min(c(min(htpred_male_early_df $Body_mass_kg, na.rm = TRUE),
+                    min(htpred_female_early_df$Body_mass_kg, na.rm = TRUE),
+                    min(htpred_male_late_df$Body_mass_kg, na.rm = TRUE),
+                    min(htpred_female_late_df$Body_mass_kg, na.rm = TRUE)))
+
+global_max <- max(c(max(htpred_male_early_df$Body_mass_kg, na.rm = TRUE),
+                    max(htpred_female_early_df$Body_mass_kg, na.rm = TRUE),
+                    max(htpred_male_late_df$Body_mass_kg, na.rm = TRUE),
+                    max(htpred_female_late_df$Body_mass_kg, na.rm = TRUE)))
+```
+
+```{r}
+# Function to plot raster heatmap overlaid on the China base map with dataset points by Ethnic Group using shapes and colors
+plot_heatmap_with_points_on_china_map <- function(raster_df, points_df, title, group_name) {
+  # Determine the number of unique ethnic groups
+  unique_ethnic_groups <- unique(points_df$Ethnic_Group)
+  num_groups <- length(unique_ethnic_groups)
+
+  # Define shape values for each ethnic group
+  # Assign specific shapes to Han, Tibetan, and Sherpa groups
+  shape_values <- rep(c(1:14), length.out = num_groups)
+  names(shape_values) <- unique_ethnic_groups
+  shape_values["Han"] <- 15     # Unify the Han group shape 
+  shape_values["Tibetan"] <-19  # Unify the Tibetan group shape
+  shape_values["Sherpa"] <- 17 # Assign specific shape for Sherpa group
+  shape_values["Mongols"] <- 18 # Assign specific shape for Mongols group
+  shape_values["Zhuang"] <- 20 # Assign specific shape for Zhuang group
+  shape_values["Uyghurs"] <- 21 # Assign specific shape for Uyghurs group
+  shape_values["Gelao"] <- 22 # Assign specific shape for Gelao group
+  # Create the plot with unified layout settings
+  p <- ggplot() +
+    geom_sf(data = china_shape, fill = "white", color = "black") +  # Plot the base map of China
+    geom_raster(data = raster_df, aes(x = Longitude, y = Latitude, fill = Body_mass_kg), alpha = 0.7) +  # Plot the heatmap
+    geom_point(data = points_df, aes(x = Longitude_E, y = Latitude_N, shape = Ethnic_Group, color = Ethnic_Group), size = 1) +  # Plot points using different shapes and colors
+    scale_shape_manual(values = shape_values) +  # Assign custom shapes, including unified Han, Tibetan, and Sherpa group shapes
+    scale_color_viridis_d(option = "plasma") +  # Assign colors using viridis color palette (option 'plasma' for variety)
+    scale_fill_viridis_c(limits = c(global_min, global_max)) +  # Use viridis color scale for the heatmap with unified limits
+    theme_minimal() +
+    labs(title = title,
+         x = "Longitude",
+         y = "Latitude",
+         fill = "Body mass (kg)",
+         shape = "Ethnic Group",
+         color = "Ethnic Group",
+         caption = group_name) +  # Add the group name under the plot
+    theme(
+      plot.title = element_text(size = 10, face = "bold", hjust = 0.5),  # Center the title and make it bold
+      axis.title = element_text(size = 10),  # Standardize axis title font size
+      axis.text = element_text(size = 10),   # Standardize axis label size
+      legend.position = "right",              # Move the legend (scale) to the left
+      legend.title = element_text(size = 10),# Standardize legend title size
+      legend.text = element_text(size = 8), # Standardize legend text size
+      plot.margin = unit(c(1, 1, 1, 1), "cm") # Set consistent plot margins
+    ) +
+    coord_sf()  # Keep the coordinate reference consistent
+
+  return(p)
+}
+
+# Plotting each dataset separately with the heatmap and the China base map
+
+# Plot heatmap for Early Male Population with points
+plot1 <- plot_heatmap_with_points_on_china_map(htpred_male_early_df, ht_china_male_early, "Heatmap with Points - Early Male Population", "Early Male Population")
+
+# Plot heatmap for Early Female Population with points
+plot2 <- plot_heatmap_with_points_on_china_map(htpred_female_early_df, ht_china_female_early, "Heatmap with Points - Early Female Population", "Early Female Population")
+
+# Plot heatmap for Late Male Population with points
+plot3 <- plot_heatmap_with_points_on_china_map(htpred_male_late_df, ht_china_male_late, "Heatmap with Points - Late Male Population", "Late Male Population")
+
+# Plot heatmap for Late Female Population with points
+plot4 <- plot_heatmap_with_points_on_china_map(htpred_female_late_df, ht_china_female_late, "Heatmap with Points - Late Female Population", "Late Female Population")
+```
+
+## 3.3 Sitting height
+```{r}
+# Convert columns to numeric, replacing non-numeric values with NA
+convert_to_numeric <- function(df, columns) {
+  for (col in columns) {
+    df[[col]] <- suppressWarnings(as.numeric(df[[col]]))  # Suppress warnings to avoid output clutter
+  }
+  return(df)
+}
+
+# Apply the function to convert columns to numeric
+groups <- convert_to_numeric(groups, c("Body_mass(kg)", "R_Sitting_ht"))
+
+# Function to subset data based on sex and time period
+subset_data <- function(df, sex, time_periods) {
+  subset(df, Sex == sex & Time_period %in% time_periods,
+         select = c(`Latitude (N)`, `Longitude (E)`, `Stature(cm)`, `Body_mass(kg)`, `R_Sitting_ht`, 
+                    Ethnic_Group, Time, Altitude_range, `Relative_Living_Bi_iliaca_breadth`))
+}
+
+# Subset data for each group
+ht_china_male_early <- subset_data(groups, "M", c(1, 2))
+ht_china_female_early <- subset_data(groups, "F", c(1, 2))
+ht_china_male_late <- subset_data(groups, "M", c(3))
+ht_china_female_late <- subset_data(groups, "F", c(3))
+
+# Function to rename columns for all datasets
+rename_columns <- function(df) {
+  names(df) <- c("Latitude_N", "Longitude_E", "Stature_cm", "Body_mass_kg", "R_Sitting_ht", 
+                 "Ethnic_Group", "Time", "Altitude_range", "Relative_Living_Bi_iliaca_breadth")
+  return(df)
+}
+
+# Apply the rename function to all datasets
+ht_china_male_early <- rename_columns(ht_china_male_early)
+ht_china_female_early <- rename_columns(ht_china_female_early)
+ht_china_male_late <- rename_columns(ht_china_male_late)
+ht_china_female_late <- rename_columns(ht_china_female_late)
+
+# Function to set spatial coordinates and plot points for each dataset
+plot_points <- function(df, title, color_function = heat.colors) {
+  # Set spatial coordinates
+  coordinates(df) <- ~ Longitude_E + Latitude_N
+  
+  # Create a plot for the current dataset using a color function
+  df$color_index <- as.numeric(cut(df$R_Sitting_ht, breaks = 10))  # Categorize R_Sitting_ht into 10 bins
+  plot(df, col = color_function(10)[df$color_index], pch = 16, cex = 0.6, main = title)
+}
+
+# Set up the plotting area to have 2 rows and 2 columns
+par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+
+# Plot each dataset
+plot_points(ht_china_male_early, title = "Early Male Population")
+plot_points(ht_china_female_early, title = "Early Female Population")
+plot_points(ht_china_male_late, title = "Late Male Population")
+plot_points(ht_china_female_late, title = "Late Female Population")
+```
+
+```{r}
+# Define the IDW interpolation function
+perform_idw_interpolation <- function(df, filename) {
+  # Check if the dataframe has coordinates set properly
+  if (!("Longitude_E" %in% names(df)) || !("Latitude_N" %in% names(df)) || !("R_Sitting_ht" %in% names(df))) {
+    stop("The data frame must contain 'Longitude_E', 'Latitude_N', and 'R_Sitting_ht' columns.")
+  }
+  
+  # Remove rows with NA values in relevant columns
+  df <- df[!is.na(df$Longitude_E) & !is.na(df$Latitude_N) & !is.na(df$R_Sitting_ht), ]
+  
+  # Define the grid extent
+  xmin <- 70
+  xmax <- 140
+  ymin <- 6
+  ymax <- 60
+
+  # Set the number of cells in x and y dimensions to ensure equal cell size
+  cell_size <- (xmax - xmin) / 400  # Assuming 400 cells in the x-direction
+
+  # Create raster with equal horizontal and vertical resolution
+  htrChina <- raster(
+    xmn = xmin, xmx = xmax,
+    ymn = ymin, ymx = ymax,
+    res = cell_size,  # Specify resolution to be the same in both x and y
+    crs = "+proj=longlat +datum=WGS84"
+  )
+
+  # Convert the raster to points to extract the coordinates
+  htrChina_points <- rasterToPoints(htrChina, spatial = TRUE)
+
+  # Set spatial coordinates for the input data frame
+  coordinates(df) <- ~ Longitude_E + Latitude_N
+
+  # Calculate distances between observation points and raster grid points
+  dists <- spDists(
+    x = coordinates(df),
+    y = coordinates(htrChina_points),
+    longlat = TRUE
+  )
+
+  # Inverse distance weighted interpolation
+  idp <- 2
+  inv.w <- (1 / (dists ^ idp))
+  z <- (t(inv.w) %*% matrix(df$R_Sitting_ht)) / apply(inv.w, 2, sum)
+
+  # Update the raster with predicted values
+  htpred.China <- htrChina
+  values(htpred.China) <- z
+
+  # Export the data as a raster file in ASCII format
+  writeRaster(htpred.China, filename = filename, format = "ascii", overwrite = TRUE)
+}
+
+# Apply the function to each group
+# Interpolation for Early Female Population
+perform_idw_interpolation(ht_china_male_early, "HT_IDW2_China_male_early.asc")
+
+# Interpolation for Early Female Population
+perform_idw_interpolation(ht_china_female_early, "HT_IDW2_China_female_early.asc")
+
+# Interpolation for Late Male Population
+perform_idw_interpolation(ht_china_male_late, "HT_IDW2_China_male_late.asc")
+
+# Interpolation for Late Female Population
+perform_idw_interpolation(ht_china_female_late, "HT_IDW2_China_female_late.asc")
+```
+
+```{r}
+# Load the interpolated rasters
+htpred_male_early <- raster("HT_IDW2_China_female_early.asc")
+htpred_female_early <- raster("HT_IDW2_China_female_early.asc")
+htpred_male_late <- raster("HT_IDW2_China_male_late.asc")
+htpred_female_late <- raster("HT_IDW2_China_female_late.asc")
+
+# Convert the rasters to data frames
+htpred_male_early_df <- as.data.frame(htpred_male_early, xy = TRUE)
+colnames(htpred_male_early_df) <- c("Longitude", "Latitude", "R_Sitting_ht")
+
+htpred_female_early_df <- as.data.frame(htpred_female_early, xy = TRUE)
+colnames(htpred_female_early_df) <- c("Longitude", "Latitude", "R_Sitting_ht")
+
+htpred_male_late_df <- as.data.frame(htpred_male_late, xy = TRUE)
+colnames(htpred_male_late_df) <- c("Longitude", "Latitude", "R_Sitting_ht")
+
+htpred_female_late_df <- as.data.frame(htpred_female_late, xy = TRUE)
+colnames(htpred_female_late_df) <- c("Longitude", "Latitude", "R_Sitting_ht")
+```
+
+```{r}
+# Calculate global min and max for R_Sitting_ht across all datasets to unify the scale
+global_min <- min(c(min(htpred_male_early_df $R_Sitting_ht, na.rm = TRUE),
+                    min(htpred_female_early_df$R_Sitting_ht, na.rm = TRUE),
+                    min(htpred_male_late_df$R_Sitting_ht, na.rm = TRUE),
+                    min(htpred_female_late_df$R_Sitting_ht, na.rm = TRUE)))
+
+global_max <- max(c(max(htpred_male_early_df$R_Sitting_ht, na.rm = TRUE),
+                    max(htpred_female_early_df$R_Sitting_ht, na.rm = TRUE),
+                    max(htpred_male_late_df$R_Sitting_ht, na.rm = TRUE),
+                    max(htpred_female_late_df$R_Sitting_ht, na.rm = TRUE)))
+```
+
+```{r}
+# Function to plot raster heatmap overlaid on the China base map with dataset points by Ethnic Group using shapes and colors
+plot_heatmap_with_points_on_china_map <- function(raster_df, points_df, title, group_name) {
+  # Determine the number of unique ethnic groups
+  unique_ethnic_groups <- unique(points_df$Ethnic_Group)
+  num_groups <- length(unique_ethnic_groups)
+
+  # Define shape values for each ethnic group
+  # Assign specific shapes to Han, Tibetan, and Sherpa groups
+  shape_values <- rep(c(1:14), length.out = num_groups)
+  names(shape_values) <- unique_ethnic_groups
+  shape_values["Han"] <- 15     # Unify the Han group shape 
+  shape_values["Tibetan"] <-19  # Unify the Tibetan group shape
+  shape_values["Sherpa"] <- 17 # Assign specific shape for Sherpa group
+  shape_values["Mongols"] <- 18 # Assign specific shape for Mongols group
+  shape_values["Zhuang"] <- 20 # Assign specific shape for Zhuang group
+  shape_values["Uyghurs"] <- 21 # Assign specific shape for Uyghurs group
+  shape_values["Gelao"] <- 22 # Assign specific shape for Gelao group
+  # Create the plot with unified layout settings
+  p <- ggplot() +
+    geom_sf(data = china_shape, fill = "white", color = "black") +  # Plot the base map of China
+    geom_raster(data = raster_df, aes(x = Longitude, y = Latitude, fill = R_Sitting_ht), alpha = 0.7) +  # Plot the heatmap
+    geom_point(data = points_df, aes(x = Longitude_E, y = Latitude_N, shape = Ethnic_Group, color = Ethnic_Group), size = 1) +  # Plot points using different shapes and colors
+    scale_shape_manual(values = shape_values) +  # Assign custom shapes, including unified Han, Tibetan, and Sherpa group shapes
+    scale_color_viridis_d(option = "plasma") +  # Assign colors using viridis color palette (option 'plasma' for variety)
+    scale_fill_viridis_c(limits = c(global_min, global_max)) +  # Use viridis color scale for the heatmap with unified limits
+    theme_minimal() +
+    labs(title = title,
+         x = "Longitude",
+         y = "Latitude",
+         fill = "Relative\nsitting height",
+         shape = "Ethnic Group",
+         color = "Ethnic Group",
+         caption = group_name) +  # Add the group name under the plot
+    theme(
+      plot.title = element_text(size = 10, face = "bold", hjust = 0.5),  # Center the title and make it bold
+      axis.title = element_text(size = 10),  # Standardize axis title font size
+      axis.text = element_text(size = 10),   # Standardize axis label size
+      legend.position = "right",              # Move the legend (scale) to the left
+      legend.title = element_text(size = 10),# Standardize legend title size
+      legend.text = element_text(size = 8), # Standardize legend text size
+      plot.margin = unit(c(1, 1, 1, 1), "cm") # Set consistent plot margins
+    ) +
+    coord_sf()  # Keep the coordinate reference consistent
+
+  return(p)
+}
+
+# Plotting each dataset separately with the heatmap and the China base map
+
+# Plot heatmap for Early Male Population with points
+plot1 <- plot_heatmap_with_points_on_china_map(htpred_male_early_df, ht_china_male_early, "Heatmap with Points - Early Male Population", "Early Male Population")
+
+# Plot heatmap for Early Female Population with points
+plot2 <- plot_heatmap_with_points_on_china_map(htpred_female_early_df, ht_china_female_early, "Heatmap with Points - Early Female Population", "Early Female Population")
+
+# Plot heatmap for Late Male Population with points
+plot3 <- plot_heatmap_with_points_on_china_map(htpred_male_late_df, ht_china_male_late, "Heatmap with Points - Late Male Population", "Late Male Population")
+
+# Plot heatmap for Late Female Population with points
+plot4 <- plot_heatmap_with_points_on_china_map(htpred_female_late_df, ht_china_female_late, "Heatmap with Points - Late Female Population", "Late Female Population")
+```
